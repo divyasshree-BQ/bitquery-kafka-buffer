@@ -1,1 +1,1 @@
-# bitquery-kafka-buffer
+# Sample Code to Buffer Blocks & Order
