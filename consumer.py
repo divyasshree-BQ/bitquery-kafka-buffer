@@ -27,7 +27,7 @@ base_conf = {
 topic = 'solana.transactions.proto'
 NUM_CONSUMERS = 6  # One consumer per partition
 
-BUFFER_CAPACITY = 50   # Set this to 10 for chains like Tron with lower Block rate
+BUFFER_CAPACITY = 300   # Reduce this for chains like Tron with lower Block rate
 buffer_lock = threading.Lock()
 block_buffer = []
 buffer_seq = itertools.count()
