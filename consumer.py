@@ -27,10 +27,11 @@ base_conf = {
 topic = 'solana.transactions.proto'
 NUM_CONSUMERS = 6  # One consumer per partition
 
-BUFFER_CAPACITY = 300   # Reduce this for chains like Tron with lower Block rate
 buffer_lock = threading.Lock()
 block_buffer = []
 buffer_seq = itertools.count()
+WINDOW_SIZE = 300  # Rolling window size in block numbers, Reduce this for chains like Tron with lower Block rate
+max_seen_block = None
 
 
 import binascii
@@ -60,28 +61,54 @@ def decode_message(msg):
     return None
 
 def flush_buffer(force=False):
-    """Flush buffered blocks respecting ordering."""
+    """Flush buffered blocks using a rolling window on block numbers."""
+    global max_seen_block
+
     with buffer_lock:
-        if force:
-            while block_buffer:
-                _, _, block_msg = heapq.heappop(block_buffer) # heappop removes and returns the smallest element from the heap
-                
+        if not block_buffer:
             return
 
-        if len(block_buffer) >= BUFFER_CAPACITY:
-            batch = []
+        # On force, or if we don't yet know a tip, just flush everything in order.
+        if force or max_seen_block is None:
             while block_buffer:
-                sort_key, buffer_index, block_msg = heapq.heappop(block_buffer)
-                batch.append((sort_key, buffer_index, block_msg))
-                print(f"Flushing block {sort_key}")
+                block_number, _, block_msg = heapq.heappop(block_buffer)
+                print(f"Flushing block {block_number}")
+                # TODO: process block_msg here
+            return
+
+        safe_threshold = max_seen_block - WINDOW_SIZE
+
+        remaining = []
+        while block_buffer:
+            block_number, seq, block_msg = heapq.heappop(block_buffer)
+            # If the block is older than the rolling window, it's safe to flush.
+            if isinstance(block_number, int) and block_number <= safe_threshold:
+                print(f"Flushing block {block_number}")
+                # TODO: process block_msg here
+            else:
+                remaining.append((block_number, seq, block_msg))
+
+        # Keep only blocks that are still inside the rolling window.
+        for item in remaining:
+            heapq.heappush(block_buffer, item)
 
 #The heap key is (block_number, buffer_seq), so it only ensures that lower block numbers are flushed before higher ones and 
 # maintains arrival order for ties. 
 def enqueue_block(block_number, block_msg):
-    """Add block to shared buffer and flush when capacity is reached."""
+    """Add block to shared buffer and flush based on a rolling window."""
+    global max_seen_block
+
     sort_key = block_number if block_number is not None else float('inf')
+
     with buffer_lock:
+        # Track the highest block number we've seen so far.
+        if block_number is not None:
+            if max_seen_block is None or block_number > max_seen_block:
+                max_seen_block = block_number
+
         heapq.heappush(block_buffer, (sort_key, next(buffer_seq), block_msg))
+
+    # Try to flush whatever is now safe to emit.
     flush_buffer(force=False)
 
 
